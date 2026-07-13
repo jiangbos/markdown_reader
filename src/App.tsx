@@ -4,12 +4,32 @@ import Tabs from "./components/Tabs";
 import EditorPane from "./components/EditorPane";
 import FolderPicker from "./components/FolderPicker";
 import QuickSwitcher from "./components/QuickSwitcher";
-import { BookIcon, MoonIcon, PanelLeftIcon, PencilIcon, SunIcon } from "./components/Icons";
+import SettingsModal from "./components/SettingsModal";
+import { BookIcon, GearIcon, MoonIcon, PanelLeftIcon, PencilIcon, SunIcon } from "./components/Icons";
 import { displayName } from "./api";
 import { dropCached, flushAll, flushSave, moveCached, onDirtyChange } from "./docStore";
+import { matchEvent } from "./keys";
 import { newId, type Tab } from "./types";
 
 type Theme = "light" | "dark";
+
+/** Each browser tab carries its project in the URL hash (#/path/to/folder). */
+function rootFromHash(): string | null {
+  try {
+    const h = decodeURI(window.location.hash.slice(1));
+    return h.startsWith("/") ? h : null;
+  } catch {
+    return null;
+  }
+}
+
+function loadProjects(): string[] {
+  try {
+    return JSON.parse(localStorage.getItem("mdr.recents") ?? "[]") as string[];
+  } catch {
+    return [];
+  }
+}
 
 function loadTabs(root: string): { tabs: Tab[]; activeId: string | null } {
   try {
@@ -25,13 +45,15 @@ function loadTabs(root: string): { tabs: Tab[]; activeId: string | null } {
 }
 
 export default function App() {
-  const [root, setRoot] = useState<string | null>(() => localStorage.getItem("mdr.root"));
+  const [root, setRoot] = useState<string | null>(() => rootFromHash() ?? localStorage.getItem("mdr.root"));
+  const [projects, setProjects] = useState<string[]>(loadProjects);
   const [tabs, setTabs] = useState<Tab[]>(() => (root ? loadTabs(root).tabs : []));
   const [activeId, setActiveId] = useState<string | null>(() => (root ? loadTabs(root).activeId : null));
   const [readingTabs, setReadingTabs] = useState<Set<string>>(new Set());
   const [dirtyPaths, setDirtyPaths] = useState<Set<string>>(new Set());
   const [pickerOpen, setPickerOpen] = useState(root === null);
   const [switcherOpen, setSwitcherOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(() => Number(localStorage.getItem("mdr.sidebarWidth")) || 280);
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem("mdr.collapsed") === "1");
   const [theme, setTheme] = useState<Theme>(() => {
@@ -48,8 +70,13 @@ export default function App() {
     document.documentElement.dataset.theme = theme;
     localStorage.setItem("mdr.theme", theme);
   }, [theme]);
+  const rootRef = useRef(root);
   useEffect(() => {
-    if (root) localStorage.setItem("mdr.root", root);
+    rootRef.current = root;
+    if (root) {
+      localStorage.setItem("mdr.root", root);
+      history.replaceState(null, "", "#" + encodeURI(root));
+    }
   }, [root]);
   useEffect(() => {
     if (root) localStorage.setItem(`mdr.tabs:${root}`, JSON.stringify({ tabs, activeId }));
@@ -194,39 +221,108 @@ export default function App() {
     setActiveId(saved.activeId);
     setReadingTabs(new Set());
     setPickerOpen(false);
-    try {
-      const recents = (JSON.parse(localStorage.getItem("mdr.recents") ?? "[]") as string[]).filter(
-        (r) => r !== path,
-      );
-      recents.unshift(path);
-      localStorage.setItem("mdr.recents", JSON.stringify(recents.slice(0, 6)));
-    } catch {
-      localStorage.setItem("mdr.recents", JSON.stringify([path]));
-    }
+    setProjects((prev) => {
+      const next = [path, ...prev.filter((p) => p !== path)].slice(0, 12);
+      localStorage.setItem("mdr.recents", JSON.stringify(next));
+      return next;
+    });
   }, []);
 
-  // ---- global keyboard shortcuts ----
+  const removeProject = useCallback((path: string) => {
+    setProjects((prev) => {
+      const next = prev.filter((p) => p !== path);
+      localStorage.setItem("mdr.recents", JSON.stringify(next));
+      return next;
+    });
+  }, []);
+
+  // Adopt project changes made by editing the URL hash / history navigation.
+  useEffect(() => {
+    const onHash = () => {
+      const r = rootFromHash();
+      if (r && r !== rootRef.current) pickFolder(r);
+    };
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, [pickFolder]);
+
+  const cycleTab = useCallback(
+    (dir: 1 | -1) => {
+      if (tabs.length < 2 || !activeId) return;
+      const idx = tabs.findIndex((t) => t.id === activeId);
+      if (idx === -1) return;
+      setActiveId(tabs[(idx + dir + tabs.length) % tabs.length].id);
+    },
+    [tabs, activeId],
+  );
+
+  const moveTab = useCallback(
+    (dir: 1 | -1) => {
+      if (!activeId) return;
+      setTabs((prev) => {
+        const idx = prev.findIndex((t) => t.id === activeId);
+        const target = idx + dir;
+        if (idx === -1 || target < 0 || target >= prev.length) return prev;
+        const next = [...prev];
+        [next[idx], next[target]] = [next[target], next[idx]];
+        return next;
+      });
+    },
+    [activeId],
+  );
+
+  // ---- global keyboard shortcuts (configurable in Settings) ----
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const mod = e.metaKey || e.ctrlKey;
-      if (!mod) return;
-      if (e.key === "p" || e.key === "k") {
-        e.preventDefault();
-        if (root) setSwitcherOpen((v) => !v);
-      } else if (e.key === "\\") {
-        e.preventDefault();
-        setCollapsed((v) => !v);
-      } else if (e.key === "e") {
-        e.preventDefault();
-        toggleReading();
-      } else if (e.key === "s") {
-        e.preventDefault();
-        void flushAll();
+      if (e.defaultPrevented) return;
+      const action = matchEvent(e);
+      if (!action) return;
+      switch (action) {
+        case "quickOpen":
+          e.preventDefault();
+          if (root) setSwitcherOpen((v) => !v);
+          break;
+        case "toggleSidebar":
+          e.preventDefault();
+          setCollapsed((v) => !v);
+          break;
+        case "toggleReading":
+          e.preventDefault();
+          toggleReading();
+          break;
+        case "save":
+          e.preventDefault();
+          void flushAll();
+          break;
+        case "settings":
+          e.preventDefault();
+          setSettingsOpen((v) => !v);
+          break;
+        case "nextTab":
+          e.preventDefault();
+          cycleTab(1);
+          break;
+        case "prevTab":
+          e.preventDefault();
+          cycleTab(-1);
+          break;
+        case "moveTabRight":
+          e.preventDefault();
+          moveTab(1);
+          break;
+        case "moveTabLeft":
+          e.preventDefault();
+          moveTab(-1);
+          break;
+        case "closeTab":
+          e.preventDefault();
+          if (activeId) closeTab(activeId);
+          break;
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [root, toggleReading]);
+  }, [root, toggleReading, cycleTab, moveTab, closeTab, activeId]);
 
   // ---- sidebar resize ----
   const dragging = useRef(false);
@@ -258,10 +354,13 @@ export default function App() {
           <div className="sidebar-wrap" style={{ width: sidebarWidth }}>
             <Sidebar
               root={root}
+              projects={projects}
               activePath={activeTab?.path ?? null}
               onFileClick={handleTreeClick}
               onFileDoubleClick={handleTreeDoubleClick}
               onChangeFolder={() => setPickerOpen(true)}
+              onSwitchProject={pickFolder}
+              onRemoveProject={removeProject}
               onCollapse={() => setCollapsed(true)}
               onOpenSwitcher={() => setSwitcherOpen(true)}
               onRenamed={handleRenamed}
@@ -296,6 +395,9 @@ export default function App() {
               onClick={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
             >
               {theme === "dark" ? <SunIcon size={16} /> : <MoonIcon size={16} />}
+            </button>
+            <button className="icon-btn" title="Settings" onClick={() => setSettingsOpen(true)}>
+              <GearIcon size={16} />
             </button>
           </div>
         </div>
@@ -350,6 +452,7 @@ export default function App() {
       {switcherOpen && root && (
         <QuickSwitcher root={root} onPick={(p, nt) => openFile(p, nt)} onClose={() => setSwitcherOpen(false)} />
       )}
+      {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} />}
     </div>
   );
 }

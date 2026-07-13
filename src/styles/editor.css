@@ -111,11 +111,54 @@
   margin-bottom: 1em;
 }
 
-/* tables (kept as source in live preview) */
+/* tables — rendered as widgets when the cursor is outside them */
 .cm-line-table {
   font-family: var(--font-mono);
   font-size: 0.85em;
   line-height: 1.5;
+}
+.cm-table-widget {
+  padding: 6px 2px;
+  overflow-x: auto;
+  cursor: default;
+}
+.cm-table-widget table {
+  border-collapse: collapse;
+  font-size: 0.94em;
+  line-height: 1.5;
+}
+.cm-table-widget th,
+.cm-table-widget td {
+  border: 1px solid var(--border);
+  padding: 6px 13px;
+  text-align: left;
+  vertical-align: top;
+}
+.cm-table-widget th {
+  background: var(--bg-panel);
+  font-weight: 650;
+}
+.cm-table-widget:hover table {
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+.cm-table-widget a {
+  color: var(--accent);
+  text-decoration: none;
+}
+.cm-table-widget code {
+  font-family: var(--font-mono);
+  font-size: 0.88em;
+  background: var(--code-bg);
+  border-radius: 5px;
+  padding: 1.5px 5px;
+}
+.cm-table-widget p {
+  margin: 0;
+}
+
+/* empty-note placeholder */
+.cm-placeholder {
+  color: var(--text-faint);
 }
 
 /* links */

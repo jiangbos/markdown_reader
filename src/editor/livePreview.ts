@@ -373,11 +373,16 @@ function buildDecorations(view: EditorView): DecorationSet {
           }
 
           case "Table": {
+            // Rendered by the tableWidget state field when inactive; while
+            // the selection is inside, show the raw source in monospace so
+            // the columns line up.
             const n = node.node;
-            const a = doc.lineAt(n.from).number;
-            const b = doc.lineAt(n.to).number;
-            for (let i = a; i <= b; i++) lineClass(doc.line(i).from, "cm-line-table");
-            return;
+            if (spanActive(n.from, n.to)) {
+              const a = doc.lineAt(n.from).number;
+              const b = doc.lineAt(n.to).number;
+              for (let i = a; i <= b; i++) lineClass(doc.line(i).from, "cm-line-table");
+            }
+            return false;
           }
         }
       },
@@ -424,6 +429,12 @@ const plugin = ViewPlugin.fromClass(
         const link = target.closest(".cm-md-link") as HTMLElement | null;
         if (link?.dataset.href && (event.metaKey || event.ctrlKey)) {
           view.state.facet(mdContext).openLink(link.dataset.href);
+          event.preventDefault();
+          return true;
+        }
+        const anchor = target.closest(".cm-table-widget a[href]") as HTMLAnchorElement | null;
+        if (anchor && (event.metaKey || event.ctrlKey)) {
+          view.state.facet(mdContext).openLink(anchor.getAttribute("href") ?? "");
           event.preventDefault();
           return true;
         }

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { EditorView } from "@codemirror/view";
 import { api, resolvePath } from "../api";
 import { createEditorState } from "../editor/setup";
-import { getCachedState, setCachedState, scheduleSave, flushSave, currentText } from "../docStore";
+import { getCachedState, setCachedState, scheduleSave, currentText } from "../docStore";
 import { renderMarkdown } from "../markdown/render";
 
 interface Props {
@@ -52,7 +52,6 @@ export default function EditorPane({ path, visible, reading, onOpenFile }: Props
         const text = state.doc.toString();
         setStats({ words: (text.match(/\S+/g) ?? []).length, chars: text.length });
       },
-      onSave: () => void flushSave(path),
     };
 
     async function init() {

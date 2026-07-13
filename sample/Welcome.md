@@ -50,14 +50,14 @@ And `inline code` looks like this.
 
 ## Tables
 
-Tables render beautifully in reading view (`⌘E`), and stay as tidy source here:
+Tables render right here in the editor. **Click a table to edit its source** — click anywhere outside and it turns back into a table:
 
 | Shortcut | Action                |
 | -------- | --------------------- |
 | ⌘P       | Quick open            |
 | ⌘E       | Toggle reading view   |
-| ⌘\       | Toggle sidebar        |
-| ⌘S       | Save now (auto-saves anyway) |
+| ⌃⌥→ / ⌃⌥← | Next / previous tab  |
+| ⌘;       | Settings — remap any shortcut |
 
 ---
 

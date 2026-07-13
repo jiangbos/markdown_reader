@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, basename, type Entry } from "../api";
+import ProjectSwitcher from "./ProjectSwitcher";
 import {
   ChevronRight,
   FileIcon,
@@ -14,14 +15,25 @@ import {
 
 interface Props {
   root: string;
+  projects: string[];
   activePath: string | null;
   onFileClick: (path: string) => void;
   onFileDoubleClick: (path: string) => void;
   onChangeFolder: () => void;
+  onSwitchProject: (path: string) => void;
+  onRemoveProject: (path: string) => void;
   onCollapse: () => void;
   onOpenSwitcher: () => void;
   onRenamed: (from: string, to: string) => void;
   onDeleted: (path: string) => void;
+}
+
+function loadExpanded(root: string): Set<string> {
+  try {
+    return new Set(JSON.parse(localStorage.getItem(`mdr.expanded:${root}`) ?? "[]") as string[]);
+  } catch {
+    return new Set();
+  }
 }
 
 interface MenuState {
@@ -32,23 +44,20 @@ interface MenuState {
 
 export default function Sidebar({
   root,
+  projects,
   activePath,
   onFileClick,
   onFileDoubleClick,
   onChangeFolder,
+  onSwitchProject,
+  onRemoveProject,
   onCollapse,
   onOpenSwitcher,
   onRenamed,
   onDeleted,
 }: Props) {
   const [dirs, setDirs] = useState<ReadonlyMap<string, Entry[]>>(new Map());
-  const [expanded, setExpanded] = useState<Set<string>>(() => {
-    try {
-      return new Set(JSON.parse(localStorage.getItem(`mdr.expanded:${root}`) ?? "[]") as string[]);
-    } catch {
-      return new Set();
-    }
-  });
+  const [expanded, setExpanded] = useState<Set<string>>(() => loadExpanded(root));
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [renaming, setRenaming] = useState<string | null>(null);
@@ -69,14 +78,22 @@ export default function Sidebar({
 
   useEffect(() => {
     setDirs(new Map());
+    const exp = loadExpanded(root);
+    setExpanded(exp);
+    setRenaming(null);
+    setMenu(null);
     void loadDir(root);
-    for (const dir of expanded) if (dir.startsWith(root)) void loadDir(dir);
+    for (const dir of exp) if (dir.startsWith(root)) void loadDir(dir);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [root]);
 
-  useEffect(() => {
-    localStorage.setItem(`mdr.expanded:${root}`, JSON.stringify([...expanded]));
-  }, [expanded, root]);
+  const updateExpanded = (fn: (prev: Set<string>) => Set<string>) => {
+    setExpanded((prev) => {
+      const next = fn(prev);
+      localStorage.setItem(`mdr.expanded:${root}`, JSON.stringify([...next]));
+      return next;
+    });
+  };
 
   useEffect(() => {
     if (!menu) return;
@@ -102,7 +119,7 @@ export default function Sidebar({
   }, [renaming]);
 
   const toggleDir = (path: string) => {
-    setExpanded((prev) => {
+    updateExpanded((prev) => {
       const next = new Set(prev);
       if (next.has(path)) next.delete(path);
       else {
@@ -121,7 +138,7 @@ export default function Sidebar({
   const createEntry = async (dir: string, type: "file" | "folder") => {
     try {
       const { path } = await api.create(dir, type);
-      if (dir !== root) setExpanded((prev) => new Set(prev).add(dir));
+      if (dir !== root) updateExpanded((prev) => new Set(prev).add(dir));
       await loadDir(dir);
       if (type === "file") onFileClick(path);
       setRenaming(path);
@@ -233,12 +250,13 @@ export default function Sidebar({
   return (
     <div className="sidebar">
       <div className="sidebar-header">
-        <button className="icon-btn" title="Change folder" onClick={onChangeFolder}>
-          <FolderIcon size={15} />
-        </button>
-        <span className="sidebar-title" title={root}>
-          {basename(root) || root}
-        </span>
+        <ProjectSwitcher
+          root={root}
+          projects={projects}
+          onSwitch={onSwitchProject}
+          onAddFolder={onChangeFolder}
+          onRemove={onRemoveProject}
+        />
         <span className="sidebar-actions">
           <button className="icon-btn" title="Quick open (⌘P)" onClick={onOpenSwitcher}>
             <SearchIcon size={15} />

@@ -602,6 +602,9 @@ kbd {
 .picker-row:hover {
   background: var(--bg-hover);
 }
+.picker-row-hi {
+  background: var(--accent-soft);
+}
 .picker-empty {
   padding: 18px;
   text-align: center;
@@ -664,6 +667,177 @@ kbd {
   text-overflow: ellipsis;
   font-size: 11.5px;
   color: var(--text-faint);
+}
+
+/* ---------- project switcher ---------- */
+
+.project-switcher {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+.ps-button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-weight: 600;
+  max-width: 100%;
+  min-width: 0;
+  color: var(--text);
+}
+.ps-button:hover {
+  background: var(--bg-hover);
+}
+.ps-button > svg:first-child {
+  color: var(--text-faint);
+  flex: none;
+}
+.ps-button > svg:last-child {
+  color: var(--text-faint);
+  flex: none;
+}
+.ps-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.ps-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 150;
+  width: 320px;
+  max-width: 78vw;
+  max-height: 55vh;
+  overflow-y: auto;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  padding: 5px;
+}
+.ps-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: default;
+  user-select: none;
+}
+.ps-row-hi {
+  background: var(--accent-soft);
+}
+.ps-check {
+  width: 14px;
+  flex: none;
+  display: inline-flex;
+  color: var(--accent);
+}
+.ps-row-name {
+  flex: none;
+  white-space: nowrap;
+}
+.ps-row-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+.ps-row-actions {
+  display: none;
+  gap: 2px;
+  flex: none;
+}
+.ps-row:hover .ps-row-actions,
+.ps-row-hi .ps-row-actions {
+  display: inline-flex;
+}
+.ps-row-actions button {
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  color: var(--text-faint);
+}
+.ps-row-actions button:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.ps-sep {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 2px;
+}
+.ps-add {
+  width: 100%;
+  text-align: left;
+  padding: 6px 8px;
+  border-radius: 6px;
+  color: var(--accent);
+}
+.ps-add:hover {
+  background: var(--bg-hover);
+}
+.ps-hint {
+  padding: 4px 8px 2px;
+  font-size: 10.5px;
+  color: var(--text-faint);
+}
+
+/* ---------- settings ---------- */
+
+.settings-modal {
+  width: 460px;
+}
+.settings-list {
+  overflow-y: auto;
+  max-height: 52vh;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.settings-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 2px;
+}
+.settings-label {
+  flex: 1;
+}
+.settings-reset {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+.settings-reset:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+.settings-key {
+  min-width: 84px;
+  text-align: center;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-panel);
+  color: var(--text);
+}
+.settings-key:hover {
+  border-color: var(--accent);
+}
+.settings-key-recording {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 
 /* toast */

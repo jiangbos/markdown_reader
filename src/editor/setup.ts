@@ -7,6 +7,7 @@ import {
   highlightSpecialChars,
   rectangularSelection,
   crosshairCursor,
+  placeholder,
 } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { searchKeymap, highlightSelectionMatches } from "@codemirror/search";
@@ -14,7 +15,9 @@ import { syntaxHighlighting, indentUnit } from "@codemirror/language";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { languages } from "@codemirror/language-data";
 import { livePreview, mdContext, type MdContext } from "./livePreview";
+import { tableRendering } from "./tableWidget";
 import { mdHighlightStyle } from "./highlight";
+import { matchEvent } from "../keys";
 
 /** Wrap/unwrap the current selection (or word) with an inline mark like ** or *. */
 function toggleWrap(marker: string) {
@@ -68,7 +71,6 @@ function toggleWrap(marker: string) {
 export interface EditorCallbacks {
   onDocChanged: (content: string) => void;
   onStateChanged: (state: EditorState) => void;
-  onSave: () => void;
 }
 
 export function createEditorState(doc: string, ctx: MdContext, cb: EditorCallbacks): EditorState {
@@ -88,22 +90,29 @@ export function createEditorState(doc: string, ctx: MdContext, cb: EditorCallbac
       markdown({ base: markdownLanguage, codeLanguages: languages }),
       syntaxHighlighting(mdHighlightStyle),
       livePreview(),
+      tableRendering,
+      placeholder("Start writing…"),
       mdContext.of(ctx),
       EditorView.contentAttributes.of({ spellcheck: "true", autocorrect: "on", autocapitalize: "sentences" }),
-      keymap.of([
-        {
-          key: "Mod-s",
-          run: () => {
-            cb.onSave();
+      // Formatting shortcuts resolve through the live keybinding config, so
+      // remapping them in Settings applies to already-open editors.
+      EditorView.domEventHandlers({
+        keydown(e, view) {
+          const action = matchEvent(e);
+          if (action === "bold") {
+            toggleWrap("**")(view);
+            e.preventDefault();
             return true;
-          },
+          }
+          if (action === "italic") {
+            toggleWrap("*")(view);
+            e.preventDefault();
+            return true;
+          }
+          return false;
         },
-        { key: "Mod-b", run: toggleWrap("**") },
-        { key: "Mod-i", run: toggleWrap("*") },
-        ...defaultKeymap,
-        ...historyKeymap,
-        ...searchKeymap,
-      ]),
+      }),
+      keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap]),
       EditorView.updateListener.of((update) => {
         cb.onStateChanged(update.state);
         if (update.docChanged) cb.onDocChanged(update.state.doc.toString());
