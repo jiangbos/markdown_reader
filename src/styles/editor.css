@@ -35,13 +35,16 @@
   border-radius: 3px;
 }
 
-/* headings */
+/* headings.
+   NB: vertical spacing on .cm-line elements must be padding or transparent
+   border, never margin — CodeMirror's height map ignores margins, which
+   skews posAtCoords/scrollIntoView and makes clicks land on the wrong line. */
 .cm-line-heading {
-  margin-top: 0.7em;
-  margin-bottom: 0.15em;
+  padding-top: 0.7em;
+  padding-bottom: 0.15em;
 }
 .cm-line-h1 {
-  margin-top: 0.9em;
+  padding-top: 0.9em;
 }
 
 /* fenced code blocks */
@@ -56,12 +59,14 @@
 .cm-line-code-first {
   border-radius: 10px 10px 0 0;
   padding-top: 8px;
-  margin-top: 0.45em;
+  border-top: 0.45em solid transparent;
+  background-clip: padding-box;
 }
 .cm-line-code-last {
   border-radius: 0 0 10px 10px;
   padding-bottom: 8px;
-  margin-bottom: 0.45em;
+  border-bottom: 0.45em solid transparent;
+  background-clip: padding-box;
 }
 .cm-line-code-first.cm-line-code-last {
   border-radius: 10px;
@@ -108,7 +113,8 @@
 .cm-line-frontmatter-last {
   border-radius: 0 0 10px 10px;
   padding-bottom: 6px;
-  margin-bottom: 1em;
+  border-bottom: 1em solid transparent;
+  background-clip: padding-box;
 }
 
 /* tables — rendered as widgets when the cursor is outside them */

@@ -6,7 +6,7 @@ import {
   ViewUpdate,
   WidgetType,
 } from "@codemirror/view";
-import { EditorState, Facet, Range } from "@codemirror/state";
+import { EditorState, Facet, Range, StateEffect, StateField, Transaction } from "@codemirror/state";
 import { syntaxTree } from "@codemirror/language";
 
 /**
@@ -32,6 +32,42 @@ export const mdContext = Facet.define<MdContext, MdContext>({
       openLink: (h: string) => window.open(h, "_blank", "noopener"),
     },
 });
+
+// ---- mouse gesture freeze ------------------------------------------------------
+
+/**
+ * While a mouse button is down, the reveal state is frozen to what it was at
+ * mousedown. Revealing raw source mid-gesture reflows the text under the
+ * pointer, which makes clicks land visually elsewhere and drags jitter; the
+ * caret line only reveals once the button is released.
+ */
+const beginGesture = StateEffect.define<null>();
+const endGesture = StateEffect.define<null>();
+
+function emptyCaretLines(state: EditorState): Set<number> {
+  const lines = new Set<number>();
+  for (const r of state.selection.ranges) if (r.empty) lines.add(state.doc.lineAt(r.from).number);
+  return lines;
+}
+
+export const mouseGesture = StateField.define<Set<number> | null>({
+  create: () => null,
+  update(value, tr) {
+    for (const e of tr.effects) {
+      // A second/third click of a multi-click keeps the existing freeze:
+      // if the layout shifted between the clicks of a double-click, the
+      // second click would land on different text and select the wrong word.
+      if (e.is(beginGesture)) return value ?? emptyCaretLines(tr.state);
+      if (e.is(endGesture)) return null;
+    }
+    if (value && tr.docChanged) return null; // an edit ends the freeze
+    return value;
+  },
+});
+
+export function gestureChanged(tr: Transaction): boolean {
+  return tr.effects.some((e) => e.is(beginGesture) || e.is(endGesture));
+}
 
 // ---- widgets -----------------------------------------------------------------
 
@@ -152,13 +188,11 @@ function buildDecorations(view: EditorView): DecorationSet {
   const ctx = state.facet(mdContext);
   const deco: Range<Decoration>[] = [];
 
-  // Lines touched by any selection show raw source.
-  const activeLines = new Set<number>();
-  for (const r of state.selection.ranges) {
-    const from = doc.lineAt(r.from).number;
-    const to = doc.lineAt(r.to).number;
-    for (let i = from; i <= to; i++) activeLines.add(i);
-  }
+  // Lines holding a caret (empty selection) show raw source. Non-empty
+  // selections leave everything rendered: revealing marks mid-drag reflows
+  // the text under the pointer and makes precise selection impossible.
+  // During a mouse gesture the pre-click state is used (see mouseGesture).
+  const activeLines = state.field(mouseGesture, false) ?? emptyCaretLines(state);
   const lineActive = (pos: number) => activeLines.has(doc.lineAt(pos).number);
   const spanActive = (from: number, to: number) => {
     const a = doc.lineAt(from).number;
@@ -403,22 +437,68 @@ function toggleTask(view: EditorView, pos: number) {
   });
 }
 
+/** Map a click inside a rendered table widget to the matching source cell. */
+function tableCellPos(view: EditorView, table: HTMLElement, target: HTMLElement): number {
+  const start = view.posAtDOM(table);
+  const cell = target.closest("td, th");
+  const row = cell?.closest("tr");
+  if (!cell || !row) return start;
+  const doc = view.state.doc;
+  const rowIdx = [...table.querySelectorAll("tr")].indexOf(row);
+  const cellIdx = [...row.children].indexOf(cell);
+  // Header is the table's first source line; body row r sits r+1 lines below
+  // it (past the |---| separator).
+  const lineNum = Math.min(doc.lineAt(start).number + rowIdx + (rowIdx > 0 ? 1 : 0), doc.lines);
+  const line = doc.line(lineNum);
+  const text = line.text;
+  const pipes: number[] = [];
+  for (let i = 0; i < text.length; i++) if (text[i] === "|" && text[i - 1] !== "\\") pipes.push(i);
+  const leading = /^\s*\|/.test(text);
+  let col = leading ? (pipes[cellIdx] !== undefined ? pipes[cellIdx] + 1 : 0) : cellIdx === 0 ? 0 : (pipes[cellIdx - 1] ?? -1) + 1;
+  while (text[col] === " ") col++;
+  return line.from + Math.min(col, text.length);
+}
+
 const plugin = ViewPlugin.fromClass(
   class {
     decorations: DecorationSet;
-    constructor(view: EditorView) {
+    releaseTimer = -1;
+    private releaseGesture: () => void;
+    constructor(readonly view: EditorView) {
       this.decorations = buildDecorations(view);
+      // Document-level mouseup handlers (CodeMirror's drag selection) run
+      // before window ones, so the final selection is in place by the time
+      // the freeze lifts. The reveal itself is delayed past the double-click
+      // window: a second click must land on the same layout as the first, or
+      // word selection picks up the wrong characters.
+      this.releaseGesture = () => {
+        window.clearTimeout(this.releaseTimer);
+        this.releaseTimer = window.setTimeout(() => {
+          if (view.state.field(mouseGesture) !== null) view.dispatch({ effects: endGesture.of(null) });
+        }, 300);
+      };
+      window.addEventListener("mouseup", this.releaseGesture);
+      window.addEventListener("dragend", this.releaseGesture);
     }
     update(u: ViewUpdate) {
-      if (u.docChanged || u.selectionSet || u.viewportChanged) {
+      if (u.docChanged || u.selectionSet || u.viewportChanged || u.transactions.some(gestureChanged)) {
         this.decorations = buildDecorations(u.view);
       }
+    }
+    destroy() {
+      window.clearTimeout(this.releaseTimer);
+      window.removeEventListener("mouseup", this.releaseGesture);
+      window.removeEventListener("dragend", this.releaseGesture);
     }
   },
   {
     decorations: (v) => v.decorations,
     eventHandlers: {
       mousedown(event, view) {
+        if (event.button === 0) {
+          window.clearTimeout(this.releaseTimer); // multi-click: keep the freeze alive
+          view.dispatch({ effects: beginGesture.of(null) });
+        }
         const target = event.target as HTMLElement;
         if (target.classList.contains("cm-task-checkbox")) {
           const pos = view.posAtDOM(target);
@@ -438,9 +518,11 @@ const plugin = ViewPlugin.fromClass(
           event.preventDefault();
           return true;
         }
-        const widget = target.closest(".cm-widget-reveal");
+        const widget = target.closest(".cm-widget-reveal") as HTMLElement | null;
         if (widget) {
-          const pos = view.posAtDOM(widget);
+          const pos = widget.classList.contains("cm-table-widget")
+            ? tableCellPos(view, widget, target)
+            : view.posAtDOM(widget);
           view.dispatch({ selection: { anchor: pos } });
           view.focus();
           event.preventDefault();
@@ -453,5 +535,5 @@ const plugin = ViewPlugin.fromClass(
 );
 
 export function livePreview() {
-  return [plugin];
+  return [mouseGesture, plugin];
 }

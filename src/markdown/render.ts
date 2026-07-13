@@ -31,6 +31,17 @@ md.renderer.rules.link_open = (tokens, idx, options, env, self) => {
   return defaultLinkOpen(tokens, idx, options, env, self);
 };
 
+// Tag block elements with their source line so scroll position can be mapped
+// between reading mode and the editor.
+md.core.ruler.push("source_line_attrs", (state) => {
+  const offset = (state.env as { lineOffset?: number }).lineOffset ?? 0;
+  for (const token of state.tokens) {
+    if (token.map && token.nesting !== -1 && token.type !== "inline") {
+      token.attrSet("data-line", String(token.map[0] + offset));
+    }
+  }
+});
+
 // Resolve relative image paths through the local file server.
 const defaultImage =
   md.renderer.rules.image ??
@@ -42,14 +53,17 @@ md.renderer.rules.image = (tokens, idx, options, env, self) => {
   return defaultImage(tokens, idx, options, env, self);
 };
 
-function stripFrontmatter(text: string): string {
-  if (!text.startsWith("---\n")) return text;
+function stripFrontmatter(text: string): { body: string; lineOffset: number } {
+  if (!text.startsWith("---\n")) return { body: text, lineOffset: 0 };
   const end = text.indexOf("\n---", 3);
-  if (end === -1) return text;
+  if (end === -1) return { body: text, lineOffset: 0 };
   const after = text.indexOf("\n", end + 1);
-  return after === -1 ? "" : text.slice(after + 1);
+  if (after === -1) return { body: "", lineOffset: 0 };
+  const stripped = text.slice(0, after + 1);
+  return { body: text.slice(after + 1), lineOffset: (stripped.match(/\n/g) ?? []).length };
 }
 
 export function renderMarkdown(text: string, resolveSrc: (src: string) => string): string {
-  return md.render(stripFrontmatter(text), { resolveSrc });
+  const { body, lineOffset } = stripFrontmatter(text);
+  return md.render(body, { resolveSrc, lineOffset });
 }

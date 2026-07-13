@@ -2,7 +2,7 @@ import { Decoration, DecorationSet, EditorView, WidgetType } from "@codemirror/v
 import { EditorState, Range, StateField } from "@codemirror/state";
 import { ensureSyntaxTree, syntaxTree } from "@codemirror/language";
 import { renderMarkdown } from "../markdown/render";
-import { mdContext } from "./livePreview";
+import { gestureChanged, mdContext, mouseGesture } from "./livePreview";
 
 /**
  * Rendered tables in live preview.
@@ -64,9 +64,20 @@ function findTables(state: EditorState): TableRange[] {
 
 function buildDeco(state: EditorState, tables: TableRange[]): DecorationSet {
   const { resolveSrc } = state.facet(mdContext);
+  const frozen = state.field(mouseGesture, false) ?? null;
+  const caretInside = (t: TableRange) =>
+    frozen
+      ? [...frozen].some((ln) => {
+          const line = state.doc.line(ln);
+          return line.to >= t.from && line.from <= t.to;
+        })
+      : state.selection.ranges.some((r) => r.empty && r.from >= t.from && r.from <= t.to);
   const deco: Range<Decoration>[] = [];
   for (const t of tables) {
-    const touched = state.selection.ranges.some((r) => r.to >= t.from && r.from <= t.to);
+    // Only a caret inside the table reveals the source; drag selections keep
+    // the rendered widget, and a mouse gesture freezes the pre-click state so
+    // the layout stays stable under the pointer.
+    const touched = caretInside(t);
     if (!touched) {
       deco.push(
         Decoration.replace({
@@ -89,7 +100,7 @@ export const tableRendering = StateField.define<{ tables: TableRange[]; deco: De
       const tables = findTables(tr.state);
       return { tables, deco: buildDeco(tr.state, tables) };
     }
-    if (tr.selection) return { tables: value.tables, deco: buildDeco(tr.state, value.tables) };
+    if (tr.selection || gestureChanged(tr)) return { tables: value.tables, deco: buildDeco(tr.state, value.tables) };
     return value;
   },
   provide: (f) => EditorView.decorations.from(f, (v) => v.deco),

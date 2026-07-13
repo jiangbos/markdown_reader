@@ -7,6 +7,7 @@ import { LayoutView, type DragInfo, type LayoutCtx } from "./components/SplitVie
 import { GearIcon, MoonIcon, PanelLeftIcon, SunIcon } from "./components/Icons";
 import { displayName } from "./api";
 import { dropCached, flushAll, flushSave, moveCached, onDirtyChange } from "./docStore";
+import { moveScrollLine } from "./scrollStore";
 import { matchEvent } from "./keys";
 import { newId } from "./types";
 import {
@@ -272,6 +273,7 @@ export default function App() {
   const handleRenamed = useCallback((from: string, to: string) => {
     const mapPath = (p: string) => (p === from ? to : p.startsWith(from + "/") ? to + p.slice(from.length) : p);
     moveCached(from, to);
+    moveScrollLine(from, to);
     setLayout((prev) => mapPanes(prev, (p) => ({ ...p, tabs: p.tabs.map((t) => ({ ...t, path: mapPath(t.path) })) })));
     setDirtyPaths((prev) => new Set([...prev].map(mapPath)));
   }, []);
