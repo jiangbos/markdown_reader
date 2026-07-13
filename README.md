@@ -11,6 +11,7 @@ A local-first markdown **reader & editor** that runs as a web app. Point it at a
 - **Multiple projects** — the sidebar header is a project switcher (type-ahead + ⏎); every project keeps its own tab set, and the project lives in the URL hash, so **different browser tabs can show different projects** (⌘-click a project to open it in a new browser tab)
 - **Keyboard-first folder picker** — type the first letters of a folder to jump to it, `→` to enter, `←` to go up, `⏎` to open
 - **Tabs** — single-click opens a note in the current tab, double-click opens a new tab and jumps to it; `⌃⌥→`/`⌃⌥←` rotate tabs, `⌃⌥⇧→`/`⌃⌥⇧←` reorder them, middle-click closes; unsaved-dot indicator
+- **Split view** — drag a tab along the tab bar to reorder, onto another pane's tab bar to move it, or to any edge of a pane to split (side-by-side or stacked, nested however you like — e.g. one note on the left, two stacked on the right). Dividers drag to resize, empty panes fold away, and the layout is saved per project
 - **Settings page** (gear icon or `⌘;`) — every keyboard shortcut is remappable, applied instantly, persisted locally
 - **Quick switcher** (`⌘P`) — fuzzy-jump to any note in the folder
 - **File management** — right-click for new note / new folder / rename / delete, inline renaming
@@ -63,7 +64,7 @@ All of these can be remapped in Settings (`⌘;`). Defaults:
 - KaTeX math and Mermaid diagrams
 - Wiki-style `[[links]]` and backlinks
 - File watching to reflect external changes live
-- Drag-and-drop tab reordering and image paste
+- Image paste and drag-in from the file tree
 
 ## License
 

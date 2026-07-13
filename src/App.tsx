@@ -1,15 +1,30 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Sidebar from "./components/Sidebar";
-import Tabs from "./components/Tabs";
-import EditorPane from "./components/EditorPane";
 import FolderPicker from "./components/FolderPicker";
 import QuickSwitcher from "./components/QuickSwitcher";
 import SettingsModal from "./components/SettingsModal";
-import { BookIcon, GearIcon, MoonIcon, PanelLeftIcon, PencilIcon, SunIcon } from "./components/Icons";
+import { LayoutView, type DragInfo, type LayoutCtx } from "./components/SplitView";
+import { GearIcon, MoonIcon, PanelLeftIcon, SunIcon } from "./components/Icons";
 import { displayName } from "./api";
 import { dropCached, flushAll, flushSave, moveCached, onDirtyChange } from "./docStore";
 import { matchEvent } from "./keys";
-import { newId, type Tab } from "./types";
+import { newId } from "./types";
+import {
+  findPane,
+  isValidLayout,
+  makePane,
+  mapPanes,
+  moveTabTo,
+  normalize,
+  panes,
+  removeTab,
+  splitWithTab,
+  updatePane,
+  updateSplitSizes,
+  type LayoutNode,
+  type Side,
+  type Tab,
+} from "./layout";
 
 type Theme = "light" | "dark";
 
@@ -31,24 +46,46 @@ function loadProjects(): string[] {
   }
 }
 
-function loadTabs(root: string): { tabs: Tab[]; activeId: string | null } {
-  try {
-    const raw = JSON.parse(localStorage.getItem(`mdr.tabs:${root}`) ?? "null") as {
-      tabs: Tab[];
-      activeId: string | null;
-    } | null;
-    if (raw?.tabs?.length) return raw;
-  } catch {
-    /* fresh start */
+function loadLayout(root: string | null): { layout: LayoutNode; activePaneId: string } {
+  if (root) {
+    try {
+      const raw = JSON.parse(localStorage.getItem(`mdr.layout:${root}`) ?? "null") as {
+        layout?: unknown;
+        activePaneId?: string;
+      } | null;
+      if (raw && isValidLayout(raw.layout)) {
+        const layout = normalize(raw.layout);
+        const all = panes(layout);
+        const active = all.find((p) => p.id === raw.activePaneId) ?? all[0];
+        return { layout, activePaneId: active.id };
+      }
+      // migrate the pre-split single-tab-list format
+      const old = JSON.parse(localStorage.getItem(`mdr.tabs:${root}`) ?? "null") as {
+        tabs?: Tab[];
+        activeId?: string | null;
+      } | null;
+      if (old?.tabs?.length) {
+        const pane = makePane(old.tabs, old.activeId ?? null);
+        return { layout: pane, activePaneId: pane.id };
+      }
+    } catch {
+      /* fall through to fresh pane */
+    }
   }
-  return { tabs: [], activeId: null };
+  const pane = makePane();
+  return { layout: pane, activePaneId: pane.id };
 }
 
 export default function App() {
   const [root, setRoot] = useState<string | null>(() => rootFromHash() ?? localStorage.getItem("mdr.root"));
   const [projects, setProjects] = useState<string[]>(loadProjects);
-  const [tabs, setTabs] = useState<Tab[]>(() => (root ? loadTabs(root).tabs : []));
-  const [activeId, setActiveId] = useState<string | null>(() => (root ? loadTabs(root).activeId : null));
+  const [initial] = useState(() => loadLayout(root));
+  const [layout, setLayout] = useState<LayoutNode>(initial.layout);
+  const [activePaneId, setActivePaneId] = useState<string>(initial.activePaneId);
+  const [drag, setDrag] = useState<DragInfo | null>(null);
+  // Drop handlers read this ref: state updates can lag behind the native
+  // dragstart → drop sequence, but the ref is set synchronously.
+  const dragRef = useRef<DragInfo | null>(null);
   const [readingTabs, setReadingTabs] = useState<Set<string>>(new Set());
   const [dirtyPaths, setDirtyPaths] = useState<Set<string>>(new Set());
   const [pickerOpen, setPickerOpen] = useState(root === null);
@@ -62,8 +99,20 @@ export default function App() {
     return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
   });
 
-  const activeTab = tabs.find((t) => t.id === activeId) ?? null;
-  const previewRef = useRef<{ tabId: string; prevPath: string; newPath: string; at: number } | null>(null);
+  const activePane = findPane(layout, activePaneId) ?? panes(layout)[0];
+  const activeTab = activePane.tabs.find((t) => t.id === activePane.activeTabId) ?? null;
+  const previewRef = useRef<{ paneId: string; tabId: string; prevPath: string; newPath: string; at: number } | null>(
+    null,
+  );
+  const activePaneIdRef = useRef(activePaneId);
+  useEffect(() => {
+    activePaneIdRef.current = activePaneId;
+  }, [activePaneId]);
+
+  // If the active pane vanished (last tab closed, merged away), pick a real one.
+  useEffect(() => {
+    if (!findPane(layout, activePaneId)) setActivePaneId(panes(layout)[0].id);
+  }, [layout, activePaneId]);
 
   // ---- persistence ----
   useEffect(() => {
@@ -79,8 +128,8 @@ export default function App() {
     }
   }, [root]);
   useEffect(() => {
-    if (root) localStorage.setItem(`mdr.tabs:${root}`, JSON.stringify({ tabs, activeId }));
-  }, [tabs, activeId, root]);
+    if (root) localStorage.setItem(`mdr.layout:${root}`, JSON.stringify({ layout, activePaneId }));
+  }, [layout, activePaneId, root]);
   useEffect(() => {
     localStorage.setItem("mdr.sidebarWidth", String(sidebarWidth));
   }, [sidebarWidth]);
@@ -106,31 +155,37 @@ export default function App() {
     [],
   );
 
-  // ---- tab operations ----
-  const openFile = useCallback(
-    (path: string, newTab: boolean) => {
-      setTabs((prev) => {
-        const existing = prev.find((t) => t.path === path);
+  // ---- opening files (into the active pane) ----
+  const openFile = useCallback((path: string, newTab: boolean) => {
+    setLayout((prev) => {
+      for (const p of panes(prev)) {
+        const existing = p.tabs.find((t) => t.path === path);
         if (existing) {
-          setActiveId(existing.id);
-          return prev;
+          setActivePaneId(p.id);
+          return p.activeTabId === existing.id
+            ? prev
+            : updatePane(prev, p.id, (pp) => ({ ...pp, activeTabId: existing.id }));
         }
-        const current = prev.find((t) => t.id === activeId) ?? null;
-        if (!newTab && current) {
-          previewRef.current = { tabId: current.id, prevPath: current.path, newPath: path, at: Date.now() };
-          setActiveId(current.id);
-          return prev.map((t) => (t.id === current.id ? { ...t, path } : t));
-        }
-        const tab: Tab = { id: newId(), path };
-        setActiveId(tab.id);
-        const idx = current ? prev.indexOf(current) : -1;
-        const next = [...prev];
-        next.splice(idx === -1 ? prev.length : idx + 1, 0, tab);
-        return next;
+      }
+      const pane = findPane(prev, activePaneIdRef.current) ?? panes(prev)[0];
+      setActivePaneId(pane.id);
+      const activeIdx = pane.tabs.findIndex((t) => t.id === pane.activeTabId);
+      if (!newTab && activeIdx !== -1) {
+        const current = pane.tabs[activeIdx];
+        previewRef.current = { paneId: pane.id, tabId: current.id, prevPath: current.path, newPath: path, at: Date.now() };
+        return updatePane(prev, pane.id, (pp) => ({
+          ...pp,
+          tabs: pp.tabs.map((t) => (t.id === current.id ? { ...t, path } : t)),
+        }));
+      }
+      const tab: Tab = { id: newId(), path };
+      return updatePane(prev, pane.id, (pp) => {
+        const tabs = [...pp.tabs];
+        tabs.splice(activeIdx === -1 ? tabs.length : activeIdx + 1, 0, tab);
+        return { ...pp, tabs, activeTabId: tab.id };
       });
-    },
-    [activeId],
-  );
+    });
+  }, []);
 
   const handleTreeClick = useCallback((path: string) => openFile(path, false), [openFile]);
 
@@ -141,15 +196,17 @@ export default function App() {
         // The single-click just replaced a tab's file; undo that and open a
         // dedicated new tab instead ("double-click = new tab").
         previewRef.current = null;
-        setTabs((prev) => {
-          const restored = prev.map((t) => (t.id === preview.tabId ? { ...t, path: preview.prevPath } : t));
-          const tab: Tab = { id: newId(), path };
-          const idx = restored.findIndex((t) => t.id === preview.tabId);
-          const next = [...restored];
-          next.splice(idx === -1 ? restored.length : idx + 1, 0, tab);
-          setActiveId(tab.id);
-          return next;
-        });
+        const tab: Tab = { id: newId(), path };
+        setLayout((prev) =>
+          updatePane(prev, preview.paneId, (pp) => {
+            const idx = pp.tabs.findIndex((t) => t.id === preview.tabId);
+            if (idx === -1) return pp;
+            const tabs = pp.tabs.map((t) => (t.id === preview.tabId ? { ...t, path: preview.prevPath } : t));
+            tabs.splice(idx + 1, 0, tab);
+            return { ...pp, tabs, activeTabId: tab.id };
+          }),
+        );
+        setActivePaneId(preview.paneId);
       } else {
         openFile(path, true);
       }
@@ -157,68 +214,93 @@ export default function App() {
     [openFile],
   );
 
-  const closeTab = useCallback((id: string) => {
-    setTabs((prev) => {
-      const idx = prev.findIndex((t) => t.id === id);
-      if (idx === -1) return prev;
-      const closing = prev[idx];
-      const next = prev.filter((t) => t.id !== id);
-      // Make sure any pending edits reach disk when the last tab for a file closes.
-      if (!next.some((t) => t.path === closing.path)) void flushSave(closing.path);
-      setActiveId((current) => {
-        if (current !== id) return current;
-        const neighbor = next[Math.min(idx, next.length - 1)];
-        return neighbor ? neighbor.id : null;
-      });
+  const closeTab = useCallback((paneId: string, tabId: string) => {
+    setLayout((prev) => {
+      const pane = findPane(prev, paneId);
+      const closing = pane?.tabs.find((t) => t.id === tabId) ?? null;
+      const next = normalize(removeTab(prev, paneId, tabId).root);
+      // Make sure pending edits reach disk when a file's last tab closes.
+      if (closing && !panes(next).some((p) => p.tabs.some((t) => t.path === closing.path)))
+        void flushSave(closing.path);
       return next;
     });
     setReadingTabs((prev) => {
-      if (!prev.has(id)) return prev;
+      if (!prev.has(tabId)) return prev;
       const next = new Set(prev);
-      next.delete(id);
+      next.delete(tabId);
       return next;
     });
   }, []);
 
-  const toggleReading = useCallback(() => {
-    if (!activeId) return;
+  const toggleReadingTab = useCallback((tabId: string) => {
     void flushAll();
     setReadingTabs((prev) => {
       const next = new Set(prev);
-      if (next.has(activeId)) next.delete(activeId);
-      else next.add(activeId);
+      if (next.has(tabId)) next.delete(tabId);
+      else next.add(tabId);
       return next;
     });
-  }, [activeId]);
+  }, []);
+
+  // ---- keyboard tab operations (within the active pane) ----
+  const cycleTab = useCallback((dir: 1 | -1) => {
+    setLayout((prev) => {
+      const pane = findPane(prev, activePaneIdRef.current) ?? panes(prev)[0];
+      if (!pane || pane.tabs.length < 2 || !pane.activeTabId) return prev;
+      const idx = pane.tabs.findIndex((t) => t.id === pane.activeTabId);
+      const next = pane.tabs[(idx + dir + pane.tabs.length) % pane.tabs.length];
+      return updatePane(prev, pane.id, (pp) => ({ ...pp, activeTabId: next.id }));
+    });
+  }, []);
+
+  const moveTabBy = useCallback((dir: 1 | -1) => {
+    setLayout((prev) => {
+      const pane = findPane(prev, activePaneIdRef.current) ?? panes(prev)[0];
+      if (!pane || !pane.activeTabId) return prev;
+      const idx = pane.tabs.findIndex((t) => t.id === pane.activeTabId);
+      const target = idx + dir;
+      if (idx === -1 || target < 0 || target >= pane.tabs.length) return prev;
+      return updatePane(prev, pane.id, (pp) => {
+        const tabs = [...pp.tabs];
+        [tabs[idx], tabs[target]] = [tabs[target], tabs[idx]];
+        return { ...pp, tabs };
+      });
+    });
+  }, []);
 
   // ---- rename / delete propagation ----
   const handleRenamed = useCallback((from: string, to: string) => {
     const mapPath = (p: string) => (p === from ? to : p.startsWith(from + "/") ? to + p.slice(from.length) : p);
     moveCached(from, to);
-    setTabs((prev) => prev.map((t) => ({ ...t, path: mapPath(t.path) })));
+    setLayout((prev) => mapPanes(prev, (p) => ({ ...p, tabs: p.tabs.map((t) => ({ ...t, path: mapPath(t.path) })) })));
     setDirtyPaths((prev) => new Set([...prev].map(mapPath)));
   }, []);
 
   const handleDeleted = useCallback((path: string) => {
-    setTabs((prev) => {
-      const removed = prev.filter((t) => t.path === path || t.path.startsWith(path + "/"));
-      for (const t of removed) dropCached(t.path);
-      const next = prev.filter((t) => !removed.includes(t));
-      setActiveId((current) => {
-        if (next.some((t) => t.id === current)) return current;
-        return next.length ? next[next.length - 1].id : null;
+    const isGone = (p: string) => p === path || p.startsWith(path + "/");
+    setLayout((prev) => {
+      for (const pane of panes(prev))
+        for (const t of pane.tabs) if (isGone(t.path)) dropCached(t.path);
+      const stripped = mapPanes(prev, (pane) => {
+        const tabs = pane.tabs.filter((t) => !isGone(t.path));
+        if (tabs.length === pane.tabs.length) return pane;
+        const activeTabId = tabs.some((t) => t.id === pane.activeTabId)
+          ? pane.activeTabId
+          : (tabs[tabs.length - 1]?.id ?? null);
+        return { ...pane, tabs, activeTabId };
       });
-      return next;
+      return normalize(stripped);
     });
     dropCached(path);
   }, []);
 
+  // ---- projects ----
   const pickFolder = useCallback((path: string) => {
     void flushAll();
     setRoot(path);
-    const saved = loadTabs(path);
-    setTabs(saved.tabs);
-    setActiveId(saved.activeId);
+    const saved = loadLayout(path);
+    setLayout(saved.layout);
+    setActivePaneId(saved.activePaneId);
     setReadingTabs(new Set());
     setPickerOpen(false);
     setProjects((prev) => {
@@ -236,7 +318,6 @@ export default function App() {
     });
   }, []);
 
-  // Adopt project changes made by editing the URL hash / history navigation.
   useEffect(() => {
     const onHash = () => {
       const r = rootFromHash();
@@ -245,31 +326,6 @@ export default function App() {
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
   }, [pickFolder]);
-
-  const cycleTab = useCallback(
-    (dir: 1 | -1) => {
-      if (tabs.length < 2 || !activeId) return;
-      const idx = tabs.findIndex((t) => t.id === activeId);
-      if (idx === -1) return;
-      setActiveId(tabs[(idx + dir + tabs.length) % tabs.length].id);
-    },
-    [tabs, activeId],
-  );
-
-  const moveTab = useCallback(
-    (dir: 1 | -1) => {
-      if (!activeId) return;
-      setTabs((prev) => {
-        const idx = prev.findIndex((t) => t.id === activeId);
-        const target = idx + dir;
-        if (idx === -1 || target < 0 || target >= prev.length) return prev;
-        const next = [...prev];
-        [next[idx], next[target]] = [next[target], next[idx]];
-        return next;
-      });
-    },
-    [activeId],
-  );
 
   // ---- global keyboard shortcuts (configurable in Settings) ----
   useEffect(() => {
@@ -288,7 +344,7 @@ export default function App() {
           break;
         case "toggleReading":
           e.preventDefault();
-          toggleReading();
+          if (activeTab) toggleReadingTab(activeTab.id);
           break;
         case "save":
           e.preventDefault();
@@ -308,21 +364,21 @@ export default function App() {
           break;
         case "moveTabRight":
           e.preventDefault();
-          moveTab(1);
+          moveTabBy(1);
           break;
         case "moveTabLeft":
           e.preventDefault();
-          moveTab(-1);
+          moveTabBy(-1);
           break;
         case "closeTab":
           e.preventDefault();
-          if (activeId) closeTab(activeId);
+          if (activeTab) closeTab(activePane.id, activeTab.id);
           break;
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [root, toggleReading, cycleTab, moveTab, closeTab, activeId]);
+  }, [root, activeTab, activePane.id, toggleReadingTab, cycleTab, moveTabBy, closeTab]);
 
   // ---- sidebar resize ----
   const dragging = useRef(false);
@@ -332,8 +388,7 @@ export default function App() {
     document.body.classList.add("resizing");
     const onMove = (ev: MouseEvent) => {
       if (!dragging.current) return;
-      const w = Math.min(560, Math.max(160, ev.clientX));
-      setSidebarWidth(w);
+      setSidebarWidth(Math.min(560, Math.max(160, ev.clientX)));
     };
     const onUp = () => {
       dragging.current = false;
@@ -345,7 +400,63 @@ export default function App() {
     window.addEventListener("mouseup", onUp);
   };
 
-  const isReading = activeId !== null && readingTabs.has(activeId);
+  // ---- layout context for panes/splits ----
+  const ctx: LayoutCtx = {
+    activePaneId: activePane.id,
+    drag,
+    readingTabs,
+    dirtyPaths,
+    onActivatePane: setActivePaneId,
+    onActivateTab: (paneId, tabId) => {
+      setActivePaneId(paneId);
+      setLayout((prev) =>
+        updatePane(prev, paneId, (p) => (p.activeTabId === tabId ? p : { ...p, activeTabId: tabId })),
+      );
+    },
+    onCloseTab: closeTab,
+    onOpenFile: openFile,
+    onToggleReadingTab: toggleReadingTab,
+    onDragStart: (paneId, tabId) => {
+      dragRef.current = { paneId, tabId };
+      setDrag({ paneId, tabId });
+    },
+    onDragEnd: () => {
+      dragRef.current = null;
+      setDrag(null);
+    },
+    onDropTab: (targetPaneId, index) => {
+      const d = dragRef.current;
+      if (!d) return;
+      setLayout((prev) => moveTabTo(prev, d.paneId, d.tabId, targetPaneId, index));
+      setActivePaneId(targetPaneId);
+      dragRef.current = null;
+      setDrag(null);
+    },
+    onDropZone: (targetPaneId, zone) => {
+      const d = dragRef.current;
+      if (!d) return;
+      if (zone === "center") {
+        if (d.paneId === targetPaneId) {
+          setLayout((prev) => updatePane(prev, targetPaneId, (p) => ({ ...p, activeTabId: d.tabId })));
+        } else {
+          setLayout((prev) => moveTabTo(prev, d.paneId, d.tabId, targetPaneId, Number.MAX_SAFE_INTEGER));
+        }
+        setActivePaneId(targetPaneId);
+      } else {
+        setLayout((prev) => {
+          const res = splitWithTab(prev, d.paneId, d.tabId, targetPaneId, zone as Side);
+          if (res.newPaneId) {
+            setActivePaneId(res.newPaneId);
+            return res.root;
+          }
+          return prev;
+        });
+      }
+      dragRef.current = null;
+      setDrag(null);
+    },
+    onResizeSplit: (splitId, sizes) => setLayout((prev) => updateSplitSizes(prev, splitId, sizes)),
+  };
 
   return (
     <div className="app">
@@ -373,78 +484,24 @@ export default function App() {
 
       <div className="main">
         <div className="topbar">
-          {(collapsed || !root) && (
-            <button className="icon-btn" title="Show sidebar (⌘\)" onClick={() => setCollapsed(false)}>
-              <PanelLeftIcon size={16} />
-            </button>
-          )}
-          <Tabs tabs={tabs} activeId={activeId} dirtyPaths={dirtyPaths} onActivate={setActiveId} onClose={closeTab} />
-          <div className="topbar-actions">
-            {activeTab && (
-              <button
-                className={`icon-btn${isReading ? " icon-btn-active" : ""}`}
-                title={isReading ? "Edit (⌘E)" : "Reading view (⌘E)"}
-                onClick={toggleReading}
-              >
-                {isReading ? <PencilIcon size={16} /> : <BookIcon size={16} />}
-              </button>
-            )}
-            <button
-              className="icon-btn"
-              title={theme === "dark" ? "Light theme" : "Dark theme"}
-              onClick={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
-            >
-              {theme === "dark" ? <SunIcon size={16} /> : <MoonIcon size={16} />}
-            </button>
-            <button className="icon-btn" title="Settings" onClick={() => setSettingsOpen(true)}>
-              <GearIcon size={16} />
-            </button>
-          </div>
+          <button className="icon-btn" title="Toggle sidebar (⌘\)" onClick={() => setCollapsed((v) => !v)}>
+            <PanelLeftIcon size={16} />
+          </button>
+          <span className="topbar-spacer" />
+          <button
+            className="icon-btn"
+            title={theme === "dark" ? "Light theme" : "Dark theme"}
+            onClick={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
+          >
+            {theme === "dark" ? <SunIcon size={16} /> : <MoonIcon size={16} />}
+          </button>
+          <button className="icon-btn" title="Settings" onClick={() => setSettingsOpen(true)}>
+            <GearIcon size={16} />
+          </button>
         </div>
 
         <div className="panes">
-          {tabs.map((tab) => (
-            <EditorPane
-              key={tab.id + ":" + tab.path}
-              path={tab.path}
-              visible={tab.id === activeId}
-              reading={readingTabs.has(tab.id)}
-              onOpenFile={openFile}
-            />
-          ))}
-          {tabs.length === 0 && (
-            <div className="welcome">
-              <div className="welcome-card">
-                <h1>Markdown Reader</h1>
-                <p>A quiet place for your notes.</p>
-                <div className="welcome-hints">
-                  <div>
-                    <kbd>Click</kbd> a note to open it here
-                  </div>
-                  <div>
-                    <kbd>Double-click</kbd> to open it in a new tab
-                  </div>
-                  <div>
-                    <kbd>⌘P</kbd> jump to any note
-                  </div>
-                  <div>
-                    <kbd>⌘E</kbd> toggle reading view
-                  </div>
-                  <div>
-                    <kbd>⌘B</kbd>/<kbd>⌘I</kbd> bold / italic
-                  </div>
-                  <div>
-                    <kbd>⌘\</kbd> hide the sidebar
-                  </div>
-                </div>
-                {!root && (
-                  <button className="btn-primary" onClick={() => setPickerOpen(true)}>
-                    Open a folder
-                  </button>
-                )}
-              </div>
-            </div>
-          )}
+          <LayoutView node={layout} ctx={ctx} />
         </div>
       </div>
 
