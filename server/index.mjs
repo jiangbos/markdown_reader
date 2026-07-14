@@ -9,8 +9,10 @@ const PORT = process.env.PORT || 5174;
 const app = express();
 app.use(express.json({ limit: "64mb" }));
 
-const MD_EXT = /\.(md|markdown|txt)$/i;
-const SKIP_DIRS = new Set(["node_modules", "bower_components", "__pycache__"]);
+// Directories too big/noisy to descend into during the recursive file walk.
+// They still show up in the (lazy, per-directory) tree listing.
+const SKIP_WALK_DIRS = new Set(["node_modules", "bower_components", "__pycache__", ".git", ".hg", ".svn"]);
+const MAX_TEXT_BYTES = 20 * 1024 * 1024;
 
 function ok(res, data) {
   res.json(data);
@@ -27,8 +29,8 @@ function safePath(p) {
   return resolved;
 }
 
-function isVisible(name) {
-  return !name.startsWith(".") && !SKIP_DIRS.has(name);
+function isHidden(name) {
+  return name.startsWith(".");
 }
 
 // ---- basic info -------------------------------------------------------------
@@ -49,8 +51,8 @@ app.get("/api/browse", async (req, res) => {
   try {
     const entries = await fs.readdir(p, { withFileTypes: true });
     const dirs = entries
-      .filter((e) => e.isDirectory() && isVisible(e.name))
-      .map((e) => ({ name: e.name, path: path.join(p, e.name) }))
+      .filter((e) => e.isDirectory())
+      .map((e) => ({ name: e.name, path: path.join(p, e.name), hidden: isHidden(e.name) }))
       .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
     const parent = path.dirname(p);
     ok(res, { path: p, parent: parent === p ? null : parent, dirs });
@@ -59,7 +61,7 @@ app.get("/api/browse", async (req, res) => {
   }
 });
 
-// ---- list one directory (dirs + markdown files) ------------------------------
+// ---- list one directory (all dirs + all files, hidden included) --------------
 
 app.get("/api/list", async (req, res) => {
   const p = safePath(req.query.path);
@@ -68,10 +70,9 @@ app.get("/api/list", async (req, res) => {
     const entries = await fs.readdir(p, { withFileTypes: true });
     const result = [];
     for (const e of entries) {
-      if (!isVisible(e.name)) continue;
       const full = path.join(p, e.name);
-      if (e.isDirectory()) result.push({ name: e.name, path: full, type: "dir" });
-      else if (e.isFile() && MD_EXT.test(e.name)) result.push({ name: e.name, path: full, type: "file" });
+      if (e.isDirectory()) result.push({ name: e.name, path: full, type: "dir", hidden: isHidden(e.name) });
+      else if (e.isFile()) result.push({ name: e.name, path: full, type: "file", hidden: isHidden(e.name) });
     }
     result.sort((a, b) => {
       if (a.type !== b.type) return a.type === "dir" ? -1 : 1;
@@ -83,7 +84,7 @@ app.get("/api/list", async (req, res) => {
   }
 });
 
-// ---- recursive markdown file list (for quick switcher) -----------------------
+// ---- recursive file list (for quick switcher) --------------------------------
 
 app.get("/api/files", async (req, res) => {
   const root = safePath(req.query.root);
@@ -99,10 +100,10 @@ app.get("/api/files", async (req, res) => {
       return;
     }
     for (const e of entries) {
-      if (!isVisible(e.name)) continue;
+      if (SKIP_WALK_DIRS.has(e.name) || e.name === ".DS_Store") continue;
       const full = path.join(dir, e.name);
       if (e.isDirectory()) await walk(full, depth + 1);
-      else if (e.isFile() && MD_EXT.test(e.name)) {
+      else if (e.isFile()) {
         files.push(path.relative(root, full));
         if (files.length >= LIMIT) return;
       }
@@ -119,8 +120,13 @@ app.get("/api/file", async (req, res) => {
   const p = safePath(req.query.path);
   if (!p) return fail(res, 400, "Invalid path");
   try {
-    const [content, stat] = await Promise.all([fs.readFile(p, "utf8"), fs.stat(p)]);
-    ok(res, { path: p, content, mtime: stat.mtimeMs });
+    const stat = await fs.stat(p);
+    if (stat.size > MAX_TEXT_BYTES)
+      return fail(res, 413, `File is too large to display (${(stat.size / 1048576).toFixed(1)} MB)`);
+    const buf = await fs.readFile(p);
+    // A null byte near the start almost always means binary data.
+    if (buf.subarray(0, 8192).includes(0)) return fail(res, 415, "Not a text file (binary data)");
+    ok(res, { path: p, content: buf.toString("utf8"), mtime: stat.mtimeMs });
   } catch (err) {
     fail(res, 404, `Cannot read file: ${err.message}`);
   }

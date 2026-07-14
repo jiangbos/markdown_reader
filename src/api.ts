@@ -2,6 +2,7 @@ export interface Entry {
   name: string;
   path: string;
   type: "dir" | "file";
+  hidden?: boolean;
 }
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {

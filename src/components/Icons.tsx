@@ -35,6 +35,13 @@ export const FileIcon = icon(
     <polyline points="14 2 14 8 20 8" />
   </>,
 );
+export const ImageIcon = icon(
+  <>
+    <rect x="3" y="3" width="18" height="18" rx="2" />
+    <circle cx="9" cy="9" r="2" />
+    <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" />
+  </>,
+);
 export const PlusIcon = icon(
   <>
     <line x1="12" y1="5" x2="12" y2="19" />

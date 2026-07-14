@@ -87,7 +87,7 @@ export default function QuickSwitcher({ root, onPick, onClose }: Props) {
         <input
           ref={inputRef}
           className="switcher-input"
-          placeholder="Jump to a note…  (↩ open · ⌘↩ open in new tab)"
+          placeholder="Jump to a file…  (↩ open · ⌘↩ open in new tab)"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={onKeyDown}
@@ -108,7 +108,7 @@ export default function QuickSwitcher({ root, onPick, onClose }: Props) {
               <span className="switcher-path">{f}</span>
             </div>
           ))}
-          {results.length === 0 && <div className="picker-empty">No matching notes</div>}
+          {results.length === 0 && <div className="picker-empty">No matching files</div>}
         </div>
       </div>
     </div>

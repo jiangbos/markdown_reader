@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, basename, type Entry } from "../api";
+import { fileKind } from "../fileTypes";
 import ProjectSwitcher from "./ProjectSwitcher";
 import {
   ChevronRight,
@@ -7,6 +8,7 @@ import {
   FolderIcon,
   FolderOpenIcon,
   FolderPlusIcon,
+  ImageIcon,
   PanelLeftIcon,
   PlusIcon,
   RefreshIcon,
@@ -207,12 +209,13 @@ export default function Sidebar({
         <span className="tree-name">{entry.type === "file" ? entry.name.replace(/\.(md|markdown)$/i, "") : entry.name}</span>
       );
 
+      const hiddenCls = entry.hidden ? " tree-hidden" : "";
       if (entry.type === "dir") {
         const isOpen = expanded.has(entry.path);
         return [
           <div
             key={entry.path}
-            className="tree-row tree-dir"
+            className={`tree-row tree-dir${hiddenCls}`}
             style={indent}
             onClick={() => !isRenaming && toggleDir(entry.path)}
             onContextMenu={(e) => openMenu(e, entry)}
@@ -229,7 +232,7 @@ export default function Sidebar({
       return [
         <div
           key={entry.path}
-          className={`tree-row tree-file${entry.path === activePath ? " tree-active" : ""}`}
+          className={`tree-row tree-file${entry.path === activePath ? " tree-active" : ""}${hiddenCls}`}
           style={indent}
           onClick={(e) => {
             if (isRenaming) return;
@@ -239,7 +242,7 @@ export default function Sidebar({
           onContextMenu={(e) => openMenu(e, entry)}
         >
           <span className="tree-icon">
-            <FileIcon size={15} />
+            {fileKind(entry.path) === "image" ? <ImageIcon size={15} /> : <FileIcon size={15} />}
           </span>
           {nameEl}
         </div>,
@@ -279,7 +282,7 @@ export default function Sidebar({
         {renderRows(root, 0)}
         {dirs.get(root)?.length === 0 && (
           <div className="tree-empty">
-            No markdown files here yet.
+            This folder is empty.
             <button className="link-btn" onClick={() => void createEntry(root, "file")}>
               Create your first note
             </button>

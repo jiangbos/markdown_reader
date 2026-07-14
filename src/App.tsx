@@ -6,6 +6,7 @@ import SettingsModal from "./components/SettingsModal";
 import { LayoutView, type DragInfo, type LayoutCtx } from "./components/SplitView";
 import { GearIcon, MoonIcon, PanelLeftIcon, SunIcon } from "./components/Icons";
 import { displayName } from "./api";
+import { fileKind } from "./fileTypes";
 import { dropCached, flushAll, flushSave, moveCached, onDirtyChange } from "./docStore";
 import { moveScrollLine } from "./scrollStore";
 import { matchEvent } from "./keys";
@@ -346,7 +347,7 @@ export default function App() {
           break;
         case "toggleReading":
           e.preventDefault();
-          if (activeTab) toggleReadingTab(activeTab.id);
+          if (activeTab && fileKind(activeTab.path) === "markdown") toggleReadingTab(activeTab.id);
           break;
         case "save":
           e.preventDefault();

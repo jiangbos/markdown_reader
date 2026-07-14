@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import EditorPane from "./EditorPane";
+import FileViewer from "./FileViewer";
 import TabBar from "./Tabs";
 import type { PaneNode, Side } from "../layout";
 import type { LayoutCtx } from "./SplitView";
@@ -57,7 +57,7 @@ export default function PaneView({ pane, ctx }: { pane: PaneNode; ctx: LayoutCtx
         onDragLeave={onDragLeave}
       >
         {pane.tabs.map((tab) => (
-          <EditorPane
+          <FileViewer
             key={tab.id + ":" + tab.path}
             path={tab.path}
             visible={tab.id === pane.activeTabId}

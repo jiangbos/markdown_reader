@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { displayName } from "../api";
+import { fileKind } from "../fileTypes";
 import { BookIcon, PencilIcon, XIcon } from "./Icons";
 import type { PaneNode } from "../layout";
 import type { LayoutCtx } from "./SplitView";
@@ -7,6 +8,7 @@ import type { LayoutCtx } from "./SplitView";
 export default function TabBar({ pane, ctx }: { pane: PaneNode; ctx: LayoutCtx }) {
   const [insert, setInsert] = useState<number | null>(null);
   const readingActive = pane.activeTabId !== null && ctx.readingTabs.has(pane.activeTabId);
+  const activeTab = pane.tabs.find((t) => t.id === pane.activeTabId) ?? null;
 
   const indexFromEvent = (e: React.DragEvent): number => {
     const els = Array.from((e.currentTarget as HTMLElement).querySelectorAll(".tab"));
@@ -85,7 +87,7 @@ export default function TabBar({ pane, ctx }: { pane: PaneNode; ctx: LayoutCtx }
         );
       })}
       <div className={`tabbar-space${insert === pane.tabs.length ? " tab-insert-end" : ""}`} />
-      {pane.activeTabId && (
+      {activeTab && fileKind(activeTab.path) === "markdown" && (
         <button
           className={`icon-btn tabbar-action${readingActive ? " icon-btn-active" : ""}`}
           title={readingActive ? "Edit (⌘E)" : "Reading view (⌘E)"}

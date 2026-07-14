@@ -85,10 +85,9 @@ export default function EditorPane({ path, visible, reading, onOpenFile }: Props
     const openLink = (href: string) => {
       if (/^[a-z][a-z0-9+.-]*:/i.test(href) || href.startsWith("//")) {
         window.open(href, "_blank", "noopener");
-      } else if (/\.(md|markdown|txt)$/i.test(href)) {
-        onOpenFileRef.current(resolvePath(path, decodeURIComponent(href)), false);
       } else {
-        window.open(resolveSrc(href), "_blank", "noopener");
+        // Any relative link opens in-app; FileViewer picks the right renderer.
+        onOpenFileRef.current(resolvePath(path, decodeURIComponent(href)), false);
       }
     };
 
@@ -248,7 +247,7 @@ function ReadingView({
     const href = a.getAttribute("href") ?? "";
     if (/^[a-z][a-z0-9+.-]*:/i.test(href) || href.startsWith("//") || href.startsWith("#")) return;
     e.preventDefault();
-    if (/\.(md|markdown|txt)$/i.test(href)) onOpenFile(resolvePath(path, decodeURIComponent(href)), false);
+    onOpenFile(resolvePath(path, decodeURIComponent(href)), false);
   };
 
   if (html === null) return <div className="reading-view prose" />;
